@@ -135,6 +135,9 @@ label.f textarea{min-height:96px;resize:vertical}
 .p-sums{margin-top:3.6em;display:grid;grid-template-columns:1fr auto;row-gap:1.1em;font-variant-numeric:tabular-nums}
 .p-sums .u{border-bottom:1.6px solid var(--paper-line);padding-bottom:.15em}
 .p-sums .big{font-weight:700;font-size:1.1em}
+.datebox{display:flex;gap:8px;align-items:flex-end;min-width:0}
+.datebox label.f{flex:1;min-width:0}
+.datebox .btn{white-space:nowrap}
 .p-tax{text-align:center;font-size:.85em;margin-top:2.4em}
 .p-pay{text-align:center;font-weight:700;font-size:.9em;margin-top:4.2em;line-height:1.9}
 .p-greet{font-size:.8em;margin-top:3.6em;line-height:2.2}
@@ -290,7 +293,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
 
         <div class="fields">
           <label class="f">Rechnungs-Nr.<input id="f-nr" inputmode="numeric" autocomplete="off"></label>
-          <label class="f">Rechnungsdatum<input id="f-datum" type="date"></label>
+          <div class="datebox"><label class="f">Rechnungsdatum<input id="f-datum" type="date"></label><button class="btn primary w" id="newInvTop" type="button" title="Neue leere Rechnung">+ Neue Rechnung</button></div>
           <div class="kundebox">
             <div class="kunderow">
               <label class="f">Kunde<select id="f-kunde"></select></label>
@@ -881,6 +884,8 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     setTimeout(() => { applyLock(); renderMeta(); }, 0);
   });
   $("newInv").addEventListener("click", () => { state.editingId = null; state.draft = blankDraft(); $("afterStorno").hidden = true; loadDraftIntoForm(); say("msg",""); });
+
+  $("newInvTop").addEventListener("click", () => { $("newInv").click(); $("editorTitle").scrollIntoView({ behavior: "smooth", block: "start" }); });
 
   $("delInv").addEventListener("click", () => {
     const s = savedInv(); if (!s) return;
