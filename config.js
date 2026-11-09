@@ -1,6 +1,6 @@
-// Zugangsdaten der Supabase-Datenbank (Project Settings -> API).
-// Der "anon"/"publishable" Schlüssel ist für die Öffentlichkeit gedacht: die Daten schützt der Login + die Regeln in der Datenbank.
+// Zugangsdaten der Supabase-Datenbank (Project Settings -> API Keys).
+// Der "publishable" Schlüssel ist für die Öffentlichkeit gedacht: die Daten schützen Login + Regeln in der Datenbank.
 window.PAN_CONFIG = {
-  url: "DEINE-PROJEKT-URL",
-  key: "DEIN-ANON-KEY"
+  url: "https://iqacuwgycvrvdulhdyev.supabase.co",
+  key: "sb_publishable_QDGm8f83WgVICyNZENXHwA_XmmzaOKw"
 };
