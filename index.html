@@ -135,6 +135,7 @@ label.f textarea{min-height:96px;resize:vertical}
 .p-sums{margin-top:3.6em;display:grid;grid-template-columns:1fr auto;row-gap:1.1em;font-variant-numeric:tabular-nums}
 .p-sums .u{border-bottom:1.6px solid var(--paper-line);padding-bottom:.15em}
 .p-sums .big{font-weight:700;font-size:1.1em}
+.p-tax{text-align:center;font-size:.85em;margin-top:2.4em}
 .p-pay{text-align:center;font-weight:700;font-size:.9em;margin-top:4.2em;line-height:1.9}
 .p-greet{font-size:.8em;margin-top:3.6em;line-height:2.2}
 .p-box{border:1.2px solid var(--paper-line);border-left-width:3px;border-right-width:3px;text-align:center;font-weight:700;margin-top:1em;padding:.15em}
@@ -313,7 +314,6 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
               <div class="msg" id="icMsg" role="status"></div>
             </div>
           </div>
-          <label class="f wide">Referenz-Nr. des Auftraggebers (optional)<input id="f-ref" autocomplete="off"></label>
         </div>
         <p class="hint" id="nrHint"></p>
         <div id="kundeHint"></div>
@@ -321,6 +321,11 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
         <h2>Fahrten</h2>
         <div id="positions" style="display:flex;flex-direction:column;gap:10px"></div>
         <div><button class="btn small w" id="addPos" type="button">+ Fahrt hinzufügen</button></div>
+
+        <div class="fields">
+          <label class="f">Umsatzsteuer<select id="f-ust"><option value="19">19 % (Inland)</option><option value="0">0 % (Ausland)</option></select></label>
+          <label class="f wide" id="steuerWrap" hidden>Steuer-Hinweis auf der Rechnung<input id="f-steuerhinweis" autocomplete="off"></label>
+        </div>
 
         <div class="totals" id="totals"></div>
 
@@ -515,20 +520,28 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     }
     return max ? String(max+1) + year : "";
   }
+  const REVERSE_CHARGE = "Steuerschuldnerschaft des Leistungsempfängers (Reverse Charge)";
+  const defaultSatz = () => String(parseMoney(state.company.mwstSatz ?? 19) || 19);
+  function ustOfCustomer(kundeId){
+    const last = state.invoices.filter(i => i.kundeId === kundeId && i.typ !== "storno" && i.mwstSatz != null).sort((a,b) => String(b.datum).localeCompare(String(a.datum)))[0];
+    return last ? { ustSatz: String(last.mwstSatz), steuerHinweis: last.steuerHinweis || (Number(last.mwstSatz) === 0 ? REVERSE_CHARGE : "") } : { ustSatz: defaultSatz(), steuerHinweis: "" };
+  }
   function blankDraft(){
-    return { nr: suggestNr(), datum: todayIso(), kundeId: state.customers[0]?.id || "", referenz: "", status: "offen", notiz: "", bezahltAm: "",
-      typ: "rechnung", bezugNr: "", bezugDatum: "", positionen: [emptyPos()] };
+    const kundeId = state.customers[0]?.id || "";
+    return { nr: suggestNr(), datum: todayIso(), kundeId, referenz: "", status: "offen", notiz: "", bezahltAm: "",
+      typ: "rechnung", bezugNr: "", bezugDatum: "", positionen: [emptyPos()], ...ustOfCustomer(kundeId) };
   }
   function draftFromInvoice(inv){
     return { nr: inv.nr, datum: inv.datum, kundeId: inv.kundeId, referenz: inv.referenz || "", status: inv.status || "offen", notiz: inv.notiz || "", bezahltAm: inv.bezahltAm || "",
       typ: inv.typ || "rechnung", bezugNr: inv.bezugNr || "", bezugDatum: inv.bezugDatum || "",
+      ustSatz: inv.mwstSatz != null ? String(inv.mwstSatz) : defaultSatz(), steuerHinweis: inv.steuerHinweis || "",
       positionen: (inv.positionen && inv.positionen.length ? inv.positionen : [{}]).map(x => ({ fahrdatum: x.fahrdatum || "", tour: x.tour || "", von: x.von || "", nach: x.nach || "",
         preis: x.preis != null && x.preis !== "" ? String(x.preis).replace(".", ",") : "", sprit: moneyStr(x.sprit), maut: moneyStr(x.maut) })) };
   }
   const posCost = (p) => parseMoney(p.sprit) + parseMoney(p.maut);
   function totalsOf(d){
     const netto = round2(d.positionen.reduce((s,p)=> s + parseMoney(p.preis), 0));
-    const satz = parseMoney(state.company.mwstSatz ?? 19) || 0;
+    const satz = d.ustSatz != null && d.ustSatz !== "" ? (parseMoney(d.ustSatz) || 0) : (parseMoney(state.company.mwstSatz ?? 19) || 0);
     const mwst = Math.round(netto * satz) / 100;
     const kosten = round2(d.positionen.reduce((s,p)=> s + posCost(p), 0));
     return { netto, satz, mwst, brutto: round2(netto + mwst), kosten, gewinn: round2(netto - kosten) };
@@ -582,7 +595,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
   /* ---------- Editor ---------- */
   function loadDraftIntoForm(){
     const d = state.draft;
-    $("f-nr").value = d.nr; $("f-datum").value = d.datum; $("f-ref").value = d.referenz; $("f-notiz").value = d.notiz; $("f-bezahlt").value = d.bezahltAm || "";
+    $("f-nr").value = d.nr; $("f-datum").value = d.datum; $("f-ust").value = String(d.ustSatz); $("f-steuerhinweis").value = d.steuerHinweis || ""; $("steuerWrap").hidden = parseMoney(d.ustSatz) !== 0; $("f-notiz").value = d.notiz; $("f-bezahlt").value = d.bezahltAm || "";
     fillCustomerSelect();
     renderPositions();
     $("delConfirm").hidden = true; $("stornoConfirm").hidden = true;
@@ -603,7 +616,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     const s = savedInv(), locked = isLockedInv(s), d = state.draft, ro = !state.canWrite;
     $("editorTitle").textContent = !state.editingId ? "Neue Rechnung"
       : (d.typ === "storno" ? "Stornorechnung " : "Rechnung ") + d.nr + (locked || ro ? "" : " bearbeiten");
-    ["f-nr","f-datum","f-kunde","f-ref","addPos","custNewBtn"].forEach(id => $(id).disabled = locked || ro);
+    ["f-nr","f-datum","f-kunde","f-ust","f-steuerhinweis","addPos","custNewBtn"].forEach(id => $(id).disabled = locked || ro);
     $("custEditBtn").disabled = locked || ro || !custById(d.kundeId);
     if (locked || ro) $("custInline").hidden = true;
     document.querySelectorAll("#positions input, #positions button").forEach(el => {
@@ -711,8 +724,8 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     renderPositions(); updateLive();
     const el = $("p-"+(state.draft.positionen.length-1)+"-fahrdatum"); if (el) el.focus();
   });
-  [["f-nr","nr"],["f-datum","datum"],["f-ref","referenz"],["f-notiz","notiz"],["f-kunde","kundeId"],["f-bezahlt","bezahltAm"]].forEach(([id,k]) => {
-    $(id).addEventListener(id === "f-kunde" ? "change" : "input", e => { state.draft[k] = e.target.value; if (id === "f-kunde"){ $("custInline").hidden = true; $("custEditBtn").disabled = !custById(e.target.value); } updateLive(); });
+  [["f-nr","nr"],["f-datum","datum"],["f-steuerhinweis","steuerHinweis"],["f-notiz","notiz"],["f-kunde","kundeId"],["f-bezahlt","bezahltAm"]].forEach(([id,k]) => {
+    $(id).addEventListener(id === "f-kunde" ? "change" : "input", e => { state.draft[k] = e.target.value; if (id === "f-kunde"){ $("custInline").hidden = true; if (!state.editingId){ Object.assign(state.draft, ustOfCustomer(e.target.value)); $("f-ust").value = state.draft.ustSatz; $("f-steuerhinweis").value = state.draft.steuerHinweis; $("steuerWrap").hidden = parseMoney(state.draft.ustSatz) !== 0; } $("custEditBtn").disabled = !custById(e.target.value); } updateLive(); });
   });
   $("f-status").addEventListener("change", e => {
     state.draft.status = e.target.value;
@@ -721,6 +734,13 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     updateLive();
   });
 
+  $("f-ust").addEventListener("change", e => {
+    const d = state.draft; d.ustSatz = e.target.value;
+    const zero = parseMoney(d.ustSatz) === 0;
+    if (zero && !String(d.steuerHinweis || "").trim()) d.steuerHinweis = REVERSE_CHARGE;
+    $("f-steuerhinweis").value = d.steuerHinweis || ""; $("steuerWrap").hidden = !zero;
+    updateLive();
+  });
   function tourConflicts(){
     const out = [];
     const tours = state.draft.positionen.map(p => String(p.tour).trim()).filter(Boolean);
@@ -756,7 +776,6 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
   function subTitleOf(inv){
     const parts = [];
     if (inv.typ === "storno" && inv.bezugNr) parts.push("zur Rechnung Nr. " + inv.bezugNr + (inv.bezugDatum ? " vom " + deDate(inv.bezugDatum) : ""));
-    if (inv.referenz) parts.push("Ihre Referenz-Nr.: " + inv.referenz);
     return parts.join(" · ");
   }
 
@@ -779,6 +798,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
       <div class="p-sums"><span>Rechnungsbetrag Netto</span><span>${pdfNum(t.netto)}</span>
         <span class="u">Zzgl. ${t.satz} % Mwst</span><span class="u">${pdfNum(t.mwst)}</span>
         <span class="big">${d.typ === "storno" ? "Storno-Betrag" : "Zu zahlender Betrag"}</span><span class="big">${pdfNum(t.brutto)}</span></div>
+      ${t.satz === 0 && String(d.steuerHinweis || "").trim() ? `<div class="p-tax">${esc(String(d.steuerHinweis).trim())}</div>` : ""}
       <div class="p-pay">${esc(pay[0])}<br>${esc(pay[1])}</div>
       <div class="p-greet">${esc(c.gruss)}<br><br>${esc(c.unterschrift1)}<br>${esc(c.unterschrift2)}</div>
       <div class="p-box">${esc(c.slogan)}</div>
@@ -795,7 +815,8 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
       bezugNr: d.bezugNr || "", bezugDatum: d.bezugDatum || "",
       positionen: d.positionen.filter(p => p.fahrdatum || p.tour || p.von || p.nach || p.preis)
         .map(p => ({ fahrdatum: p.fahrdatum, tour: String(p.tour).trim(), von: String(p.von).trim(), nach: String(p.nach).trim(), preis: parseMoney(p.preis), sprit: parseMoney(p.sprit), maut: parseMoney(p.maut) })),
-      netto: t.netto, mwstSatz: t.satz, mwst: t.mwst, brutto: t.brutto, kosten: t.kosten, ...stamp()
+      netto: t.netto, mwstSatz: t.satz, mwst: t.mwst, brutto: t.brutto, kosten: t.kosten,
+      steuerHinweis: t.satz === 0 ? String(d.steuerHinweis || "").trim() : "", ...stamp()
     };
   }
   function validate(doc){
@@ -943,8 +964,6 @@ Antworte nur mit JSON in genau dieser Form:
       if (hit) d.kundeId = hit.id; else { newCustName = kunden[0]; notes.push("Kunde „" + kunden[0] + "“ ist noch nicht angelegt – Anschrift im Formular beim Kunden ergänzen und speichern"); }
       if (matched.length > 1) notes.push("die Aufträge sind von verschiedenen Kunden (" + kunden.join(", ") + ") – besser getrennte Rechnungen");
     }
-    const refs = [...new Set(results.map(r => String(r && r.referenz || "").trim()).filter(Boolean))];
-    if (refs.length && !d.referenz) d.referenz = refs.join(", ");
     const isEmpty = (p) => !p.fahrdatum && !p.tour && !p.von && !p.nach && !p.preis;
     d.positionen = d.positionen.filter(p => !isEmpty(p));
     let added = 0;
@@ -1057,6 +1076,7 @@ Antworte nur mit JSON in genau dieser Form:
     d.setLineWidth(0.5); d.line(L, n + 11.8, R, n + 11.8);
     font(d, "bold", 11); d.text(inv.typ === "storno" ? "Storno-Betrag" : "Zu zahlender Betrag", L, n + 20.1); d.text(pdfNum(inv.brutto), R, n + 20.1, { align: "right" });
     d.setLineWidth(0.3); d.line(153, n + 22.4, R, n + 22.4);
+    if (Number(inv.mwstSatz) === 0 && inv.steuerHinweis){ font(d, "normal", 9); d.text(d.splitTextToSize(String(inv.steuerHinweis), 170)[0], M, n + 29.5, { align: "center" }); }
     let f = n + 35.5;
     if (f + 82 > 292){ d.addPage(); f = 30; }
     const pay = payLines(inv, c);
