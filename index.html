@@ -324,6 +324,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
 
         <div class="fields">
           <label class="f">Umsatzsteuer<select id="f-ust"><option value="19">19 % (Inland)</option><option value="0">0 % (Ausland)</option></select></label>
+          <label class="f">Zahlungsbedingung<select id="f-skonto"><option value="0">0 % Skonto – 30 Tage Zahlungsziel</option><option value="3">3 % Skonto bei Zahlung in 3 Tagen</option><option value="2">2 % Skonto bei Zahlung in 7 Tagen</option></select></label>
           <label class="f wide" id="steuerWrap" hidden>Steuer-Hinweis auf der Rechnung<input id="f-steuerhinweis" autocomplete="off"></label>
         </div>
 
@@ -522,9 +523,16 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
   }
   const REVERSE_CHARGE = "Steuerschuldnerschaft des Leistungsempfängers (Reverse Charge)";
   const defaultSatz = () => String(parseMoney(state.company.mwstSatz ?? 19) || 19);
+  const SKONTO = { "0": null, "3": { tage: 3 }, "2": { tage: 7 } };
+  function skontoInfo(inv, brutto){
+    const sat = String(inv.skonto || "0"), o = SKONTO[sat];
+    if (!o || inv.typ === "storno" || !(brutto > 0)) return null;
+    const p = Number(sat), abzug = Math.round(brutto * p) / 100;
+    return { p, tage: o.tage, bis: inv.datum ? addDays(inv.datum, o.tage) : "", abzug, zahl: round2(brutto - abzug) };
+  }
   function ustOfCustomer(kundeId){
     const last = state.invoices.filter(i => i.kundeId === kundeId && i.typ !== "storno" && i.mwstSatz != null).sort((a,b) => String(b.datum).localeCompare(String(a.datum)))[0];
-    return last ? { ustSatz: String(last.mwstSatz), steuerHinweis: last.steuerHinweis || (Number(last.mwstSatz) === 0 ? REVERSE_CHARGE : "") } : { ustSatz: defaultSatz(), steuerHinweis: "" };
+    return last ? { ustSatz: String(last.mwstSatz), steuerHinweis: last.steuerHinweis || (Number(last.mwstSatz) === 0 ? REVERSE_CHARGE : ""), skonto: String(last.skonto || "0") } : { ustSatz: defaultSatz(), steuerHinweis: "", skonto: "0" };
   }
   function blankDraft(){
     const kundeId = state.customers[0]?.id || "";
@@ -534,7 +542,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
   function draftFromInvoice(inv){
     return { nr: inv.nr, datum: inv.datum, kundeId: inv.kundeId, referenz: inv.referenz || "", status: inv.status || "offen", notiz: inv.notiz || "", bezahltAm: inv.bezahltAm || "",
       typ: inv.typ || "rechnung", bezugNr: inv.bezugNr || "", bezugDatum: inv.bezugDatum || "",
-      ustSatz: inv.mwstSatz != null ? String(inv.mwstSatz) : defaultSatz(), steuerHinweis: inv.steuerHinweis || "",
+      ustSatz: inv.mwstSatz != null ? String(inv.mwstSatz) : defaultSatz(), steuerHinweis: inv.steuerHinweis || "", skonto: String(inv.skonto || "0"),
       positionen: (inv.positionen && inv.positionen.length ? inv.positionen : [{}]).map(x => ({ fahrdatum: x.fahrdatum || "", tour: x.tour || "", von: x.von || "", nach: x.nach || "",
         preis: x.preis != null && x.preis !== "" ? String(x.preis).replace(".", ",") : "", sprit: moneyStr(x.sprit), maut: moneyStr(x.maut) })) };
   }
@@ -595,7 +603,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
   /* ---------- Editor ---------- */
   function loadDraftIntoForm(){
     const d = state.draft;
-    $("f-nr").value = d.nr; $("f-datum").value = d.datum; $("f-ust").value = String(d.ustSatz); $("f-steuerhinweis").value = d.steuerHinweis || ""; $("steuerWrap").hidden = parseMoney(d.ustSatz) !== 0; $("f-notiz").value = d.notiz; $("f-bezahlt").value = d.bezahltAm || "";
+    $("f-nr").value = d.nr; $("f-datum").value = d.datum; $("f-ust").value = String(d.ustSatz); $("f-skonto").value = String(d.skonto || "0"); $("f-steuerhinweis").value = d.steuerHinweis || ""; $("steuerWrap").hidden = parseMoney(d.ustSatz) !== 0; $("f-notiz").value = d.notiz; $("f-bezahlt").value = d.bezahltAm || "";
     fillCustomerSelect();
     renderPositions();
     $("delConfirm").hidden = true; $("stornoConfirm").hidden = true;
@@ -616,7 +624,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     const s = savedInv(), locked = isLockedInv(s), d = state.draft, ro = !state.canWrite;
     $("editorTitle").textContent = !state.editingId ? "Neue Rechnung"
       : (d.typ === "storno" ? "Stornorechnung " : "Rechnung ") + d.nr + (locked || ro ? "" : " bearbeiten");
-    ["f-nr","f-datum","f-kunde","f-ust","f-steuerhinweis","addPos","custNewBtn"].forEach(id => $(id).disabled = locked || ro);
+    ["f-nr","f-datum","f-kunde","f-ust","f-skonto","f-steuerhinweis","addPos","custNewBtn"].forEach(id => $(id).disabled = locked || ro);
     $("custEditBtn").disabled = locked || ro || !custById(d.kundeId);
     if (locked || ro) $("custInline").hidden = true;
     document.querySelectorAll("#positions input, #positions button").forEach(el => {
@@ -725,7 +733,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     const el = $("p-"+(state.draft.positionen.length-1)+"-fahrdatum"); if (el) el.focus();
   });
   [["f-nr","nr"],["f-datum","datum"],["f-steuerhinweis","steuerHinweis"],["f-notiz","notiz"],["f-kunde","kundeId"],["f-bezahlt","bezahltAm"]].forEach(([id,k]) => {
-    $(id).addEventListener(id === "f-kunde" ? "change" : "input", e => { state.draft[k] = e.target.value; if (id === "f-kunde"){ $("custInline").hidden = true; if (!state.editingId){ Object.assign(state.draft, ustOfCustomer(e.target.value)); $("f-ust").value = state.draft.ustSatz; $("f-steuerhinweis").value = state.draft.steuerHinweis; $("steuerWrap").hidden = parseMoney(state.draft.ustSatz) !== 0; } $("custEditBtn").disabled = !custById(e.target.value); } updateLive(); });
+    $(id).addEventListener(id === "f-kunde" ? "change" : "input", e => { state.draft[k] = e.target.value; if (id === "f-kunde"){ $("custInline").hidden = true; if (!state.editingId){ Object.assign(state.draft, ustOfCustomer(e.target.value)); $("f-ust").value = state.draft.ustSatz; $("f-skonto").value = state.draft.skonto; $("f-steuerhinweis").value = state.draft.steuerHinweis; $("steuerWrap").hidden = parseMoney(state.draft.ustSatz) !== 0; } $("custEditBtn").disabled = !custById(e.target.value); } updateLive(); });
   });
   $("f-status").addEventListener("change", e => {
     state.draft.status = e.target.value;
@@ -741,6 +749,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     $("f-steuerhinweis").value = d.steuerHinweis || ""; $("steuerWrap").hidden = !zero;
     updateLive();
   });
+  $("f-skonto").addEventListener("change", e => { state.draft.skonto = e.target.value; updateLive(); });
   function tourConflicts(){
     const out = [];
     const tours = state.draft.positionen.map(p => String(p.tour).trim()).filter(Boolean);
@@ -768,8 +777,11 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     renderPaper();
   }
 
-  function payLines(inv, c){
+  function payLines(inv, c, brutto){
     if (inv.typ === "storno") return ["Diese Stornorechnung hebt die Rechnung Nr. " + inv.bezugNr + (inv.bezugDatum ? " vom " + deDate(inv.bezugDatum) : "") + " vollständig auf.", ""];
+    const sk = skontoInfo(inv, brutto);
+    if (sk) return ["Bei Zahlung innerhalb von " + sk.tage + " Tagen" + (sk.bis ? " (bis " + deDate(sk.bis) + ")" : "") + " " + sk.p + " % Skonto: " + pdfNum(sk.abzug) + " € – zu zahlen " + pdfNum(sk.zahl) + " €.",
+      "Ohne Abzug: Zahlungsziel 30 Tage nach Rechnungseingang.", c.hinweis || ""];
     return [c.zahlungsziel || "", c.hinweis || ""];
   }
   function titleOf(inv){ return (inv.typ === "storno" ? "Stornorechnung Nr.:" : "Rechnung Nr.:") + inv.nr; }
@@ -782,7 +794,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
   function renderPaper(){
     const d = state.draft, c = state.company, k = customerOfDraft(d), t = totalsOf(d), s = savedInv();
     const rows = d.positionen.filter(p => p.fahrdatum || p.tour || p.von || p.nach || p.preis);
-    const pay = payLines(d, c), sub = subTitleOf(d);
+    const pay = payLines(d, c, t.brutto), sub = subTitleOf(d);
     $("paper").innerHTML = `
       ${s && s.status === "storniert" ? '<div class="p-stamp">STORNIERT</div>' : ""}
       <div class="p-head"><div>${[c.name,c.inhaber,c.strasse,c.ort].filter(Boolean).map(esc).join("<br>")}</div>
@@ -799,7 +811,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
         <span class="u">Zzgl. ${t.satz} % Mwst</span><span class="u">${pdfNum(t.mwst)}</span>
         <span class="big">${d.typ === "storno" ? "Storno-Betrag" : "Zu zahlender Betrag"}</span><span class="big">${pdfNum(t.brutto)}</span></div>
       ${t.satz === 0 && String(d.steuerHinweis || "").trim() ? `<div class="p-tax">${esc(String(d.steuerHinweis).trim())}</div>` : ""}
-      <div class="p-pay">${esc(pay[0])}<br>${esc(pay[1])}</div>
+      <div class="p-pay">${pay.map(esc).join("<br>")}</div>
       <div class="p-greet">${esc(c.gruss)}<br><br>${esc(c.unterschrift1)}<br>${esc(c.unterschrift2)}</div>
       <div class="p-box">${esc(c.slogan)}</div>
       <div class="p-foot">${String(c.bankzeilen || "").split("\n").map(esc).join("<br>")}</div>`;
@@ -816,7 +828,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
       positionen: d.positionen.filter(p => p.fahrdatum || p.tour || p.von || p.nach || p.preis)
         .map(p => ({ fahrdatum: p.fahrdatum, tour: String(p.tour).trim(), von: String(p.von).trim(), nach: String(p.nach).trim(), preis: parseMoney(p.preis), sprit: parseMoney(p.sprit), maut: parseMoney(p.maut) })),
       netto: t.netto, mwstSatz: t.satz, mwst: t.mwst, brutto: t.brutto, kosten: t.kosten,
-      steuerHinweis: t.satz === 0 ? String(d.steuerHinweis || "").trim() : "", ...stamp()
+      steuerHinweis: t.satz === 0 ? String(d.steuerHinweis || "").trim() : "", skonto: d.typ === "storno" ? "0" : String(d.skonto || "0"), ...stamp()
     };
   }
   function validate(doc){
@@ -1079,8 +1091,8 @@ Antworte nur mit JSON in genau dieser Form:
     if (Number(inv.mwstSatz) === 0 && inv.steuerHinweis){ font(d, "normal", 9); d.text(d.splitTextToSize(String(inv.steuerHinweis), 170)[0], M, n + 29.5, { align: "center" }); }
     let f = n + 35.5;
     if (f + 82 > 292){ d.addPage(); f = 30; }
-    const pay = payLines(inv, c);
-    font(d, "bold", 9); if (pay[0]) d.text(pay[0], M, f, { align: "center" }); if (pay[1]) d.text(pay[1], M, f + 5.7, { align: "center" });
+    const pay = payLines(inv, c, Number(inv.brutto) || 0);
+    font(d, "bold", 9); pay.forEach((line, i) => { if (line) d.text(d.splitTextToSize(line, 180)[0], M, f + i * 5.7, { align: "center" }); });
     letterClose(d, c, f + 21.2);
     return d;
   }
