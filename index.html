@@ -333,7 +333,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
         <div class="fields">
           <label class="f">Status<select id="f-status"></select></label>
           <label class="f" id="bezahltWrap" hidden>Bezahlt am<input id="f-bezahlt" type="date"></label>
-          <label class="f" id="skPaidWrap" hidden>Wie bezahlt?<select id="f-skpaid"><option value="">voller Betrag</option><option value="1">mit Skonto (abgezogen)</option></select></label>
+          <label class="f" id="skPaidWrap" hidden>Bezahlt mit<select id="f-skpaid"><option value="0">0 % – voller Betrag</option><option value="2">2 % Skonto abgezogen</option><option value="3">3 % Skonto abgezogen</option></select></label>
           <label class="f">Notiz (nur intern)<input id="f-notiz" autocomplete="off"></label>
         </div>
         <p class="hint" id="statusHint"></p>
@@ -531,9 +531,12 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     const p = Number(sat), abzug = Math.round(brutto * p) / 100;
     return { p, tage: o.tage, bis: inv.datum ? addDays(inv.datum, o.tage) : "", abzug, zahl: round2(brutto - abzug) };
   }
-  const skontoFaktor = (i) => i && i.skontoGezogen && i.status === "bezahlt" && Number(i.skonto) > 0 ? 1 - Number(i.skonto) / 100 : 1;
-  function suggestSkPaid(d){ const o = SKONTO[String(d.skonto || "0")]; return o && d.datum && d.bezahltAm && d.bezahltAm <= addDays(d.datum, o.tage) ? "1" : ""; }
-  function showSkPaid(){ const d = state.draft; const show = d.status === "bezahlt" && d.typ !== "storno" && Number(d.skonto) > 0; $("skPaidWrap").hidden = !show; $("f-skpaid").value = d.skontoGezogen ? "1" : ""; }
+  const SKP_OPTS = '<option value="0">0 % – voller Betrag</option><option value="2">2 % Skonto abgezogen</option><option value="3">3 % Skonto abgezogen</option>';
+  const storedSkPaid = (i) => i.skontoBezahlt != null && i.skontoBezahlt !== "" ? String(i.skontoBezahlt) : (i.skontoGezogen ? String(i.skonto || "0") : "0");
+  const paidPct = (i) => i && i.status === "bezahlt" && i.typ !== "storno" ? (Number(storedSkPaid(i)) || 0) : 0;
+  const skontoFaktor = (i) => 1 - paidPct(i) / 100;
+  function suggestSkPaid(inv, paidIso){ const o = SKONTO[String(inv.skonto || "0")]; return o && inv.datum && paidIso && paidIso <= addDays(inv.datum, o.tage) ? String(inv.skonto) : "0"; }
+  function showSkPaid(){ const d = state.draft; $("skPaidWrap").hidden = !(d.status === "bezahlt" && d.typ !== "storno"); $("f-skpaid").value = String(d.skontoBezahlt || "0"); }
   function ustOfCustomer(kundeId){
     const last = state.invoices.filter(i => i.kundeId === kundeId && i.typ !== "storno" && i.mwstSatz != null).sort((a,b) => String(b.datum).localeCompare(String(a.datum)))[0];
     return last ? { ustSatz: String(last.mwstSatz), steuerHinweis: last.steuerHinweis || (Number(last.mwstSatz) === 0 ? REVERSE_CHARGE : ""), skonto: String(last.skonto || "0") } : { ustSatz: defaultSatz(), steuerHinweis: "", skonto: "0" };
@@ -546,7 +549,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
   function draftFromInvoice(inv){
     return { nr: inv.nr, datum: inv.datum, kundeId: inv.kundeId, referenz: inv.referenz || "", status: inv.status || "offen", notiz: inv.notiz || "", bezahltAm: inv.bezahltAm || "",
       typ: inv.typ || "rechnung", bezugNr: inv.bezugNr || "", bezugDatum: inv.bezugDatum || "",
-      ustSatz: inv.mwstSatz != null ? String(inv.mwstSatz) : defaultSatz(), steuerHinweis: inv.steuerHinweis || "", skonto: String(inv.skonto || "0"), skontoGezogen: !!inv.skontoGezogen,
+      ustSatz: inv.mwstSatz != null ? String(inv.mwstSatz) : defaultSatz(), steuerHinweis: inv.steuerHinweis || "", skonto: String(inv.skonto || "0"), skontoBezahlt: storedSkPaid(inv),
       positionen: (inv.positionen && inv.positionen.length ? inv.positionen : [{}]).map(x => ({ fahrdatum: x.fahrdatum || "", tour: x.tour || "", von: x.von || "", nach: x.nach || "",
         preis: x.preis != null && x.preis !== "" ? String(x.preis).replace(".", ",") : "", sprit: moneyStr(x.sprit), maut: moneyStr(x.maut) })) };
   }
@@ -744,11 +747,11 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     state.draft.status = e.target.value;
     if (e.target.value === "bezahlt" && !state.draft.bezahltAm){ state.draft.bezahltAm = todayIso(); $("f-bezahlt").value = state.draft.bezahltAm; }
     $("bezahltWrap").hidden = e.target.value !== "bezahlt";
-    if (e.target.value === "bezahlt") state.draft.skontoGezogen = !!suggestSkPaid(state.draft);
+    if (e.target.value === "bezahlt") state.draft.skontoBezahlt = suggestSkPaid(state.draft, state.draft.bezahltAm);
     showSkPaid();
     updateLive();
   });
-  $("f-skpaid").addEventListener("change", e => { state.draft.skontoGezogen = e.target.value === "1"; updateLive(); });
+  $("f-skpaid").addEventListener("change", e => { state.draft.skontoBezahlt = e.target.value; updateLive(); });
 
   $("f-ust").addEventListener("change", e => {
     const d = state.draft; d.ustSatz = e.target.value;
@@ -770,10 +773,8 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
   function updateLive(){
     const d = state.draft, t = totalsOf(d);
     let html = `<span>Netto</span><span>${eur(t.netto)}</span><span>zzgl. ${t.satz} % MwSt.</span><span>${eur(t.mwst)}</span><span class="sum">${d.typ === "storno" ? "Storno-Betrag" : "Zu zahlen"}</span><span class="sum">${eur(t.brutto)}</span>`;
-    if (d.status === "bezahlt" && d.skontoGezogen && Number(d.skonto) > 0 && d.typ !== "storno"){
-      const sk = skontoInfo(d, t.brutto);
-      if (sk) html += `<span class="intern">Bezahlt mit ${sk.p} % Skonto</span><span class="intern">${eur(sk.zahl)}</span>`;
-    }
+    const pp = d.status === "bezahlt" && d.typ !== "storno" ? Number(d.skontoBezahlt) || 0 : 0;
+    if (pp > 0) html += `<span class="intern">Bezahlt mit ${pp} % Skonto (−${eur(Math.round(t.brutto * pp) / 100)})</span><span class="intern">${eur(round2(t.brutto - Math.round(t.brutto * pp) / 100))}</span>`;
     if (t.kosten > 0 && d.typ !== "storno"){
       html += `<span class="sep">Nur intern</span><span class="intern">Kosten (Sprit, Maut)</span><span class="intern">− ${eur(t.kosten)}</span>
         <span class="intern ${t.gewinn >= 0 ? "gain" : "loss"}">Gewinn (Netto − Kosten)</span><span class="intern ${t.gewinn >= 0 ? "gain" : "loss"}">${eur(t.gewinn)}</span>`;
@@ -841,7 +842,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
         .map(p => ({ fahrdatum: p.fahrdatum, tour: String(p.tour).trim(), von: String(p.von).trim(), nach: String(p.nach).trim(), preis: parseMoney(p.preis), sprit: parseMoney(p.sprit), maut: parseMoney(p.maut) })),
       netto: t.netto, mwstSatz: t.satz, mwst: t.mwst, brutto: t.brutto, kosten: t.kosten,
       steuerHinweis: t.satz === 0 ? String(d.steuerHinweis || "").trim() : "", skonto: d.typ === "storno" ? "0" : String(d.skonto || "0"),
-      skontoGezogen: d.status === "bezahlt" && d.typ !== "storno" && Number(d.skonto) > 0 && !!d.skontoGezogen, ...stamp()
+      skontoBezahlt: d.status === "bezahlt" && d.typ !== "storno" ? String(d.skontoBezahlt || "0") : "0", skontoGezogen: false, ...stamp()
     };
   }
   function validate(doc){
@@ -864,7 +865,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
         const d = state.draft;
         const merged = (s.positionen || []).map((p,i) => ({ ...p, sprit: s.typ === "storno" ? 0 : parseMoney(d.positionen[i]?.sprit), maut: s.typ === "storno" ? 0 : parseMoney(d.positionen[i]?.maut) }));
         const kosten = round2(merged.reduce((a,p) => a + p.sprit + p.maut, 0));
-        await state.db.collection("rechnungen").doc(s.id).update({ status: d.status, notiz: d.notiz.trim(), bezahltAm: d.status === "bezahlt" ? (d.bezahltAm || todayIso()) : "", skontoGezogen: d.status === "bezahlt" && Number(s.skonto) > 0 && !!d.skontoGezogen, positionen: merged, kosten, ...stamp() });
+        await state.db.collection("rechnungen").doc(s.id).update({ status: d.status, notiz: d.notiz.trim(), bezahltAm: d.status === "bezahlt" ? (d.bezahltAm || todayIso()) : "", skontoBezahlt: d.status === "bezahlt" && s.typ !== "storno" ? String(d.skontoBezahlt || "0") : "0", skontoGezogen: false, positionen: merged, kosten, ...stamp() });
         say("msg", "Änderungen an " + s.nr + " gespeichert.", "ok");
       } else {
         const doc = draftToDoc(); const err = validate(doc);
@@ -1207,7 +1208,7 @@ Antworte nur mit JSON in genau dieser Form:
   function renderRows(){
     const all = state.invoices, inv = all.filter(matchesFilter);
     const filtered = inv.length !== all.length;
-    $("filterInfo").textContent = filtered ? inv.length + " von " + all.length + " Rechnungen · Summe brutto " + eur(inv.filter(isReal).reduce((s,i)=>s+(+i.brutto||0),0)) : "";
+    $("filterInfo").textContent = filtered ? inv.length + " von " + all.length + " Rechnungen · Summe brutto " + eur(inv.filter(isReal).reduce((s,i)=>s+round2((+i.brutto||0)*skontoFaktor(i)),0)) : "";
     const ro = !state.canWrite;
     $("invRows").innerHTML = inv.length ? inv.map(i => {
       const od = overdueDays(i);
@@ -1216,17 +1217,19 @@ Antworte nur mit JSON in genau dieser Form:
       else if (i.status === "storniert") statusCell = `<span class="chip storniert">storniert</span>${i.stornoNr ? `<span class="substatus">durch ${esc(i.stornoNr)}</span>` : ""}`;
       else {
         const opts = i.status === "offen" ? ["offen","verschickt","bezahlt"] : ["verschickt","bezahlt"];
-        const paid = i.status === "bezahlt" && i.bezahltAm ? `<span class="substatus">bezahlt am ${esc(deDate(i.bezahltAm))}${i.datum ? " (nach " + daysBetween(i.datum, i.bezahltAm) + " Tagen)" : ""}${skontoFaktor(i) < 1 ? " · mit " + esc(i.skonto) + " % Skonto: " + esc(eur(round2((+i.brutto || 0) * skontoFaktor(i)))) : ""}</span>` : "";
+        const paid = i.status === "bezahlt" && i.bezahltAm ? `<span class="substatus">bezahlt am ${esc(deDate(i.bezahltAm))}${i.datum ? " (nach " + daysBetween(i.datum, i.bezahltAm) + " Tagen)" : ""}</span>` : "";
+        const skSel = i.status === "bezahlt" && !ro ? `<select aria-label="Bezahlt mit Skonto ${esc(i.nr)}" data-skp="${esc(i.id)}" style="margin-top:4px">${SKP_OPTS.replace('value="' + storedSkPaid(i) + '"', 'value="' + storedSkPaid(i) + '" selected')}</select>`
+          : (paidPct(i) ? `<span class="substatus">mit ${paidPct(i)} % Skonto bezahlt</span>` : "");
         statusCell = (ro ? `<span class="chip ${esc(i.status)}">${STATUS_LABEL[i.status] || esc(i.status)}</span>`
           : `<select aria-label="Status ${esc(i.nr)}" id="st-${esc(i.id)}" data-st="${esc(i.id)}">${opts.map(s => `<option value="${s}" ${i.status === s ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("")}</select>`)
           + (od ? ` <span class="chip ueber">${od} ${od === 1 ? "Tag" : "Tage"} überfällig</span>` : "")
-          + paid
+          + paid + skSel
           + (i.erinnertAm ? `<span class="substatus">erinnert am ${esc(deDate(i.erinnertAm))}</span>` : "");
       }
       return `<tr class="${od ? "overdue" : ""} ${isReal(i) ? "" : "dim"}">
         <td><b>${esc(i.nr)}</b></td><td>${esc(deDate(i.datum))}</td><td>${esc(i.kunde?.name)}</td>
         <td>${esc((i.positionen || []).map(p => p.tour).filter(Boolean).join(", "))}</td>
-        <td class="num">${eur(i.netto)}</td><td class="num">${eur(i.brutto)}</td>
+        <td class="num">${eur(round2((+i.netto || 0) * skontoFaktor(i)))}${skontoFaktor(i) < 1 ? `<span class="substatus">statt ${eur(i.netto)}</span>` : ""}</td><td class="num">${eur(round2((+i.brutto || 0) * skontoFaktor(i)))}${skontoFaktor(i) < 1 ? `<span class="substatus">statt ${eur(i.brutto)}</span>` : ""}</td>
         <td>${statusCell}</td>
         <td style="white-space:nowrap"><button class="btn small" data-open="${esc(i.id)}" type="button">Öffnen</button> <button class="btn small" data-pdf="${esc(i.id)}" type="button">PDF</button>${od ? ` <button class="btn small danger" data-rem="${esc(i.id)}" type="button">Erinnerung</button>` : ""}</td>
       </tr>`;
@@ -1243,10 +1246,19 @@ Antworte nur mit JSON in genau dieser Form:
     if (r){ const inv = state.invoices.find(i => i.id === r); if (inv) downloadReminder(inv, "listMsg"); }
   });
   $("invRows").addEventListener("change", async e => {
+    const skp = e.target.dataset.skp;
+    if (skp && state.db){
+      const inv = state.invoices.find(i => i.id === skp);
+      try { await state.db.collection("rechnungen").doc(skp).update({ skontoBezahlt: e.target.value, skontoGezogen: false, ...stamp() });
+        say("listMsg", (inv ? inv.nr : skp) + ": bezahlt mit " + e.target.value + " % Skonto" + (inv ? " – " + eur(round2((+inv.brutto || 0) * (1 - Number(e.target.value) / 100))) : "") + ".", "ok"); }
+      catch(err){ say("listMsg", "Konnte nicht gespeichert werden. " + writeErr(err), "bad"); }
+      return;
+    }
     const id = e.target.dataset.st; if (!id || !state.db) return;
     const v = e.target.value;
+    const cur = state.invoices.find(i => i.id === id) || {};
     try {
-      await state.db.collection("rechnungen").doc(id).update({ status: v, bezahltAm: v === "bezahlt" ? todayIso() : "", ...stamp() });
+      await state.db.collection("rechnungen").doc(id).update({ status: v, bezahltAm: v === "bezahlt" ? todayIso() : "", skontoBezahlt: v === "bezahlt" ? suggestSkPaid(cur, todayIso()) : "0", skontoGezogen: false, ...stamp() });
       say("listMsg", "Status von " + id + " ist jetzt „" + STATUS_LABEL[v] + "“" + (v === "bezahlt" ? " (bezahlt am " + deDate(todayIso()) + ", Datum unter „Öffnen“ änderbar)." : "."), "ok");
     } catch(err){ say("listMsg", "Status konnte nicht gespeichert werden. " + writeErr(err), "bad"); }
   });
