@@ -780,7 +780,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
   function payLines(inv, c, brutto){
     if (inv.typ === "storno") return ["Diese Stornorechnung hebt die Rechnung Nr. " + inv.bezugNr + (inv.bezugDatum ? " vom " + deDate(inv.bezugDatum) : "") + " vollständig auf.", ""];
     const sk = skontoInfo(inv, brutto);
-    if (sk) return ["Bei Zahlung innerhalb von " + sk.tage + " Tagen" + (sk.bis ? " (bis " + deDate(sk.bis) + ")" : "") + " " + sk.p + " % Skonto: " + pdfNum(sk.abzug) + " € – zu zahlen " + pdfNum(sk.zahl) + " €.",
+    if (sk) return ["Bei Zahlung innerhalb von " + sk.tage + " Tagen" + (sk.bis ? " (bis " + deDate(sk.bis) + ")" : "") + " " + sk.p + " % Skonto: " + eur(sk.abzug) + " – zu zahlen " + eur(sk.zahl) + ".",
       "Ohne Abzug: Zahlungsziel 30 Tage nach Rechnungseingang.", c.hinweis || ""];
     return [c.zahlungsziel || "", c.hinweis || ""];
   }
