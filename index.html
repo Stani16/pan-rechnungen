@@ -333,6 +333,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
         <div class="fields">
           <label class="f">Status<select id="f-status"></select></label>
           <label class="f" id="bezahltWrap" hidden>Bezahlt am<input id="f-bezahlt" type="date"></label>
+          <label class="f" id="skPaidWrap" hidden>Wie bezahlt?<select id="f-skpaid"><option value="">voller Betrag</option><option value="1">mit Skonto (abgezogen)</option></select></label>
           <label class="f">Notiz (nur intern)<input id="f-notiz" autocomplete="off"></label>
         </div>
         <p class="hint" id="statusHint"></p>
@@ -409,7 +410,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
               <tbody id="vatRows"></tbody>
             </table>
           </div>
-          <p class="hint">Die MwSt.-Spalte ist die Umsatzsteuer, die ans Finanzamt geht. Zahlen vor der Abgabe mit dem Steuerberater abgleichen.</p>
+          <p class="hint">Die MwSt.-Spalte ist die Umsatzsteuer, die ans Finanzamt geht. Mit Skonto bezahlte Rechnungen zählen nur mit dem wirklich bezahlten Betrag (Netto und MwSt. anteilig gekürzt). Zahlen vor der Abgabe mit dem Steuerberater abgleichen.</p>
         </div>
         <div class="panel">
           <h3>Umsatz netto pro Kunde</h3>
@@ -530,6 +531,9 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     const p = Number(sat), abzug = Math.round(brutto * p) / 100;
     return { p, tage: o.tage, bis: inv.datum ? addDays(inv.datum, o.tage) : "", abzug, zahl: round2(brutto - abzug) };
   }
+  const skontoFaktor = (i) => i && i.skontoGezogen && i.status === "bezahlt" && Number(i.skonto) > 0 ? 1 - Number(i.skonto) / 100 : 1;
+  function suggestSkPaid(d){ const o = SKONTO[String(d.skonto || "0")]; return o && d.datum && d.bezahltAm && d.bezahltAm <= addDays(d.datum, o.tage) ? "1" : ""; }
+  function showSkPaid(){ const d = state.draft; const show = d.status === "bezahlt" && d.typ !== "storno" && Number(d.skonto) > 0; $("skPaidWrap").hidden = !show; $("f-skpaid").value = d.skontoGezogen ? "1" : ""; }
   function ustOfCustomer(kundeId){
     const last = state.invoices.filter(i => i.kundeId === kundeId && i.typ !== "storno" && i.mwstSatz != null).sort((a,b) => String(b.datum).localeCompare(String(a.datum)))[0];
     return last ? { ustSatz: String(last.mwstSatz), steuerHinweis: last.steuerHinweis || (Number(last.mwstSatz) === 0 ? REVERSE_CHARGE : ""), skonto: String(last.skonto || "0") } : { ustSatz: defaultSatz(), steuerHinweis: "", skonto: "0" };
@@ -542,7 +546,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
   function draftFromInvoice(inv){
     return { nr: inv.nr, datum: inv.datum, kundeId: inv.kundeId, referenz: inv.referenz || "", status: inv.status || "offen", notiz: inv.notiz || "", bezahltAm: inv.bezahltAm || "",
       typ: inv.typ || "rechnung", bezugNr: inv.bezugNr || "", bezugDatum: inv.bezugDatum || "",
-      ustSatz: inv.mwstSatz != null ? String(inv.mwstSatz) : defaultSatz(), steuerHinweis: inv.steuerHinweis || "", skonto: String(inv.skonto || "0"),
+      ustSatz: inv.mwstSatz != null ? String(inv.mwstSatz) : defaultSatz(), steuerHinweis: inv.steuerHinweis || "", skonto: String(inv.skonto || "0"), skontoGezogen: !!inv.skontoGezogen,
       positionen: (inv.positionen && inv.positionen.length ? inv.positionen : [{}]).map(x => ({ fahrdatum: x.fahrdatum || "", tour: x.tour || "", von: x.von || "", nach: x.nach || "",
         preis: x.preis != null && x.preis !== "" ? String(x.preis).replace(".", ",") : "", sprit: moneyStr(x.sprit), maut: moneyStr(x.maut) })) };
   }
@@ -631,7 +635,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
       const cost = el.dataset.k === "sprit" || el.dataset.k === "maut";
       el.disabled = ro || (cost ? d.typ === "storno" : locked) || (el.dataset.rm !== undefined && d.positionen.length < 2);
     });
-    $("f-notiz").disabled = ro; $("f-bezahlt").disabled = ro;
+    $("f-notiz").disabled = ro; $("f-bezahlt").disabled = ro; $("f-skpaid").disabled = ro;
     let opts;
     if (!s || s.status === "offen") opts = ["offen","verschickt","bezahlt"];
     else if (s.typ === "storno" || s.status === "storniert") opts = [s.status];
@@ -643,6 +647,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     sel.value = want;
     sel.disabled = ro || opts.length < 2;
     $("bezahltWrap").hidden = want !== "bezahlt";
+    showSkPaid();
     $("statusHint").textContent = locked || ro ? "" : "Sobald eine Rechnung als „verschickt“ gespeichert ist, wird sie gesperrt und kann nur noch storniert werden. Kosten (Sprit, Maut) kannst du immer nachtragen.";
     const bar = $("lockBar");
     if (s && s.typ === "storno") { bar.hidden = false; bar.textContent = "Stornorechnung zu Rechnung " + (s.bezugNr || "?") + ". Sie ist gesperrt und bleibt zur Aufbewahrung gespeichert."; }
@@ -739,8 +744,11 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     state.draft.status = e.target.value;
     if (e.target.value === "bezahlt" && !state.draft.bezahltAm){ state.draft.bezahltAm = todayIso(); $("f-bezahlt").value = state.draft.bezahltAm; }
     $("bezahltWrap").hidden = e.target.value !== "bezahlt";
+    if (e.target.value === "bezahlt") state.draft.skontoGezogen = !!suggestSkPaid(state.draft);
+    showSkPaid();
     updateLive();
   });
+  $("f-skpaid").addEventListener("change", e => { state.draft.skontoGezogen = e.target.value === "1"; updateLive(); });
 
   $("f-ust").addEventListener("change", e => {
     const d = state.draft; d.ustSatz = e.target.value;
@@ -749,7 +757,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
     $("f-steuerhinweis").value = d.steuerHinweis || ""; $("steuerWrap").hidden = !zero;
     updateLive();
   });
-  $("f-skonto").addEventListener("change", e => { state.draft.skonto = e.target.value; updateLive(); });
+  $("f-skonto").addEventListener("change", e => { state.draft.skonto = e.target.value; showSkPaid(); updateLive(); });
   function tourConflicts(){
     const out = [];
     const tours = state.draft.positionen.map(p => String(p.tour).trim()).filter(Boolean);
@@ -762,6 +770,10 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
   function updateLive(){
     const d = state.draft, t = totalsOf(d);
     let html = `<span>Netto</span><span>${eur(t.netto)}</span><span>zzgl. ${t.satz} % MwSt.</span><span>${eur(t.mwst)}</span><span class="sum">${d.typ === "storno" ? "Storno-Betrag" : "Zu zahlen"}</span><span class="sum">${eur(t.brutto)}</span>`;
+    if (d.status === "bezahlt" && d.skontoGezogen && Number(d.skonto) > 0 && d.typ !== "storno"){
+      const sk = skontoInfo(d, t.brutto);
+      if (sk) html += `<span class="intern">Bezahlt mit ${sk.p} % Skonto</span><span class="intern">${eur(sk.zahl)}</span>`;
+    }
     if (t.kosten > 0 && d.typ !== "storno"){
       html += `<span class="sep">Nur intern</span><span class="intern">Kosten (Sprit, Maut)</span><span class="intern">− ${eur(t.kosten)}</span>
         <span class="intern ${t.gewinn >= 0 ? "gain" : "loss"}">Gewinn (Netto − Kosten)</span><span class="intern ${t.gewinn >= 0 ? "gain" : "loss"}">${eur(t.gewinn)}</span>`;
@@ -828,7 +840,8 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
       positionen: d.positionen.filter(p => p.fahrdatum || p.tour || p.von || p.nach || p.preis)
         .map(p => ({ fahrdatum: p.fahrdatum, tour: String(p.tour).trim(), von: String(p.von).trim(), nach: String(p.nach).trim(), preis: parseMoney(p.preis), sprit: parseMoney(p.sprit), maut: parseMoney(p.maut) })),
       netto: t.netto, mwstSatz: t.satz, mwst: t.mwst, brutto: t.brutto, kosten: t.kosten,
-      steuerHinweis: t.satz === 0 ? String(d.steuerHinweis || "").trim() : "", skonto: d.typ === "storno" ? "0" : String(d.skonto || "0"), ...stamp()
+      steuerHinweis: t.satz === 0 ? String(d.steuerHinweis || "").trim() : "", skonto: d.typ === "storno" ? "0" : String(d.skonto || "0"),
+      skontoGezogen: d.status === "bezahlt" && d.typ !== "storno" && Number(d.skonto) > 0 && !!d.skontoGezogen, ...stamp()
     };
   }
   function validate(doc){
@@ -851,7 +864,7 @@ body{margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
         const d = state.draft;
         const merged = (s.positionen || []).map((p,i) => ({ ...p, sprit: s.typ === "storno" ? 0 : parseMoney(d.positionen[i]?.sprit), maut: s.typ === "storno" ? 0 : parseMoney(d.positionen[i]?.maut) }));
         const kosten = round2(merged.reduce((a,p) => a + p.sprit + p.maut, 0));
-        await state.db.collection("rechnungen").doc(s.id).update({ status: d.status, notiz: d.notiz.trim(), bezahltAm: d.status === "bezahlt" ? (d.bezahltAm || todayIso()) : "", positionen: merged, kosten, ...stamp() });
+        await state.db.collection("rechnungen").doc(s.id).update({ status: d.status, notiz: d.notiz.trim(), bezahltAm: d.status === "bezahlt" ? (d.bezahltAm || todayIso()) : "", skontoGezogen: d.status === "bezahlt" && Number(s.skonto) > 0 && !!d.skontoGezogen, positionen: merged, kosten, ...stamp() });
         say("msg", "Änderungen an " + s.nr + " gespeichert.", "ok");
       } else {
         const doc = draftToDoc(); const err = validate(doc);
@@ -1203,7 +1216,7 @@ Antworte nur mit JSON in genau dieser Form:
       else if (i.status === "storniert") statusCell = `<span class="chip storniert">storniert</span>${i.stornoNr ? `<span class="substatus">durch ${esc(i.stornoNr)}</span>` : ""}`;
       else {
         const opts = i.status === "offen" ? ["offen","verschickt","bezahlt"] : ["verschickt","bezahlt"];
-        const paid = i.status === "bezahlt" && i.bezahltAm ? `<span class="substatus">bezahlt am ${esc(deDate(i.bezahltAm))}${i.datum ? " (nach " + daysBetween(i.datum, i.bezahltAm) + " Tagen)" : ""}</span>` : "";
+        const paid = i.status === "bezahlt" && i.bezahltAm ? `<span class="substatus">bezahlt am ${esc(deDate(i.bezahltAm))}${i.datum ? " (nach " + daysBetween(i.datum, i.bezahltAm) + " Tagen)" : ""}${skontoFaktor(i) < 1 ? " · mit " + esc(i.skonto) + " % Skonto: " + esc(eur(round2((+i.brutto || 0) * skontoFaktor(i)))) : ""}</span>` : "";
         statusCell = (ro ? `<span class="chip ${esc(i.status)}">${STATUS_LABEL[i.status] || esc(i.status)}</span>`
           : `<select aria-label="Status ${esc(i.nr)}" id="st-${esc(i.id)}" data-st="${esc(i.id)}">${opts.map(s => `<option value="${s}" ${i.status === s ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("")}</select>`)
           + (od ? ` <span class="chip ueber">${od} ${od === 1 ? "Tag" : "Tage"} überfällig</span>` : "")
@@ -1253,7 +1266,8 @@ Antworte nur mit JSON in genau dieser Form:
     const m = Array.from({ length: 12 }, () => ({ netto: 0, mwst: 0, brutto: 0, kosten: 0, n: 0 }));
     for (const i of list){
       const k = +String(i.datum).slice(5,7) - 1; if (k < 0 || k > 11) continue;
-      m[k].netto += +i.netto || 0; m[k].mwst += +i.mwst || 0; m[k].brutto += +i.brutto || 0; m[k].kosten += costOf(i); m[k].n++;
+      const f = skontoFaktor(i);
+      m[k].netto += round2((+i.netto || 0) * f); m[k].mwst += round2((+i.mwst || 0) * f); m[k].brutto += round2((+i.brutto || 0) * f); m[k].kosten += costOf(i); m[k].n++;
     }
     const sum = (arr, key) => arr.reduce((s, x) => s + x[key], 0);
     const tot = { netto: sum(m,"netto"), mwst: sum(m,"mwst"), brutto: sum(m,"brutto"), kosten: sum(m,"kosten"), n: sum(m,"n") };
@@ -1276,7 +1290,7 @@ Antworte nur mit JSON in genau dieser Form:
     rows += `<tr class="year"><td>Jahr ${state.year}</td><td class="num">${tot.n}</td><td class="num">${eur(tot.netto)}</td><td class="num">${eur(tot.mwst)}</td><td class="num">${eur(tot.brutto)}</td><td class="num">${eur(tot.netto - tot.kosten)}</td></tr>`;
     $("vatRows").innerHTML = rows;
     const byC = {};
-    for (const i of list){ const key = i.kundeId || i.kunde?.name || "?"; byC[key] = byC[key] || { name: custById(i.kundeId)?.name || i.kunde?.name || "Unbekannt", netto: 0, n: 0 }; byC[key].netto += +i.netto || 0; byC[key].n++; }
+    for (const i of list){ const key = i.kundeId || i.kunde?.name || "?"; byC[key] = byC[key] || { name: custById(i.kundeId)?.name || i.kunde?.name || "Unbekannt", netto: 0, n: 0 }; byC[key].netto += round2((+i.netto || 0) * skontoFaktor(i)); byC[key].n++; }
     const cs = Object.values(byC).sort((a,b) => b.netto - a.netto);
     const max = cs[0]?.netto || 1;
     $("custBars").innerHTML = cs.length ? cs.map(c => `
